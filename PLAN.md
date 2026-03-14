@@ -3,9 +3,9 @@
 
 **Prepared for:** Mateus Lima  
 **Date:** March 14, 2026  
-**Repo:** `mcl-dashboards` (or create `fitness-health-app`)  
-**Deploy target:** Vercel (auto-deploy from GitHub)  
-**Database:** Supabase (`mcl-dashboards` project, `nfjlhfyombyzjknsdtfp`)  
+**Repo:** `mattlima94/fitness-health-app`
+**Deploy target:** Vercel — https://fitness-health-app.vercel.app
+**Database:** Supabase (fitness-health-app project — awaiting project ref)
 **Monthly cost increase:** $0 (all within free tiers)
 
 ---
@@ -22,11 +22,21 @@ You are rebuilding a fitness tracking PWA. The current version is a single 1000-
 - Located in Coral Springs, Florida
 
 **His hardware ecosystem:**
-- Garmin watch (activity tracking, HR, runs)
-- Oura Ring (sleep, HRV, readiness, temperature)
-- WiFi-enabled scale (weight auto-measurements)
-- NordicTrack treadmill with iFit (treadmill sessions, syncs to Garmin Connect)
+- Omron WiFi Scale (weight, body fat) — syncs via Omron Connect app
+- Omron BP Cuff (systolic, diastolic, pulse) — syncs via Omron Connect app
+- Garmin Watch (runs, HR, steps, activity) — syncs via Garmin Connect app
+- Oura Ring (sleep, HRV, readiness, temperature) — syncs via Oura API direct
+- NordicTrack treadmill with iFit — syncs via iFit app → Garmin Connect
 - Function Health subscription (160+ biomarkers, 2x/year lab draws)
+
+**Phone:** Google Pixel (Android)
+
+**Data Pipeline:**
+- Omron Connect → Health Connect (Android) → Garmin Connect → Garmin API → Mac Mini cron → Supabase
+- iFit → Garmin Connect → Garmin API → Mac Mini cron → Supabase
+- Oura → Oura API (direct, OAuth2) → Mac Mini cron → Supabase
+- Function Health → semi-manual export (CLI tool or Chrome extension) → Supabase
+- Health Connect is the Android hub. All Omron and Garmin data flows through it. No Apple products in the stack.
 
 **His infrastructure (already live):**
 - Mac Mini M4 Pro 48GB (always-on, Tailscale VPN, SSH via Termius)
@@ -229,6 +239,22 @@ CREATE TABLE lab_results (
   UNIQUE(user_id, test_date, biomarker)
 );
 
+-- Blood pressure from Omron BP cuff (Phase 2-3)
+CREATE TABLE blood_pressure (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES profiles(id),
+  date DATE NOT NULL,
+  time_of_day TEXT CHECK (time_of_day IN ('morning', 'evening', 'other')),
+  systolic INTEGER NOT NULL,
+  diastolic INTEGER NOT NULL,
+  pulse INTEGER,
+  irregular_heartbeat BOOLEAN DEFAULT false,
+  source TEXT DEFAULT 'manual', -- 'manual', 'omron_auto'
+  device_id TEXT,
+  raw_data JSONB,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Device sync tracking
 CREATE TABLE device_sync_log (
   id SERIAL PRIMARY KEY,
@@ -250,6 +276,7 @@ ALTER TABLE sleep_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE readiness_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE blood_pressure ENABLE ROW LEVEL SECURITY;
 
 -- RLS policies (single user, but good practice)
 CREATE POLICY "Users can read own data" ON profiles FOR SELECT USING (auth.uid() = id);
