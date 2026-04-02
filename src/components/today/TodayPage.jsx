@@ -7,7 +7,15 @@ export default function TodayPage() {
   const currentWeek = useStore((s) => s.currentWeek)
   const completedExercises = useStore((s) => s.completedExercises)
   const metrics = useStore((s) => s.metrics)
+  const glp1Doses = useStore((s) => s.glp1Doses)
   const phase = getPhase(currentWeek)
+
+  // GLP-1 status
+  const lastDose = glp1Doses[0]
+  const daysSinceLastDose = lastDose
+    ? Math.floor((new Date() - new Date(lastDose.dose_date + 'T12:00:00')) / (1000 * 60 * 60 * 24))
+    : null
+  const glp1Due = daysSinceLastDose !== null && daysSinceLastDose >= 7
 
   const weekData = WORKOUT_DATA[currentWeek] || []
 
@@ -102,6 +110,31 @@ export default function TodayPage() {
             {todayWorkout.exercises.slice(0, 3).map(e => e.name).join(' · ')}
             {todayWorkout.exercises.length > 3 && ` + ${todayWorkout.exercises.length - 3} more`}
           </div>
+        </div>
+      )}
+
+      {/* GLP-1 Status */}
+      {lastDose && (
+        <div className="rounded-2xl p-4 mb-3" style={{
+          background: glp1Due ? 'rgba(255,152,0,0.06)' : 'rgba(171,71,188,0.06)',
+          border: glp1Due ? '1px solid rgba(255,152,0,0.2)' : '1px solid rgba(171,71,188,0.15)',
+        }}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold tracking-widest uppercase" style={{ opacity: 0.5 }}>GLP-1</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(171,71,188,0.15)', color: '#CE93D8' }}>
+                {lastDose.dosage_mg}mg
+              </span>
+            </div>
+            <div className="text-sm font-bold" style={{ fontFamily: 'var(--font-mono)', color: glp1Due ? '#FFB74D' : '#CE93D8' }}>
+              {daysSinceLastDose}d ago
+            </div>
+          </div>
+          {glp1Due && (
+            <div className="text-xs mt-1.5" style={{ color: '#FFB74D' }}>
+              Dose due — {daysSinceLastDose} days since last injection
+            </div>
+          )}
         </div>
       )}
 

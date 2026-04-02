@@ -6,7 +6,10 @@ export const useStore = create((set, get) => ({
   currentWeek: 1,
   completedExercises: {},
   metrics: [],
+  glp1Doses: [],
+  labResults: [],
   loading: true,
+  authenticated: false,
 
   // UI state
   selectedDay: null,
@@ -19,8 +22,9 @@ export const useStore = create((set, get) => ({
   // Actions
   setCurrentWeek: (week) => {
     set({ currentWeek: week, weekPickerOpen: false })
-    if (supabase) {
-      supabase.from('profiles').update({ current_week: week }).eq('id', get().userId).then()
+    const userId = get().userId
+    if (userId) {
+      supabase.from('profiles').update({ current_week: week }).eq('id', userId).then()
     }
   },
 
@@ -30,11 +34,12 @@ export const useStore = create((set, get) => ({
     completed[key] = !completed[key]
     set({ completedExercises: completed })
 
-    if (supabase && get().userId) {
+    const userId = get().userId
+    if (userId) {
       const isComplete = completed[key]
       if (isComplete) {
         supabase.from('workout_logs').upsert({
-          user_id: get().userId,
+          user_id: userId,
           week,
           day_index: dayIndex,
           exercise_index: exerciseIndex,
@@ -43,24 +48,84 @@ export const useStore = create((set, get) => ({
         }, { onConflict: 'user_id,week,day_index,exercise_index' }).then()
       } else {
         supabase.from('workout_logs').update({ completed: false, completed_at: null })
-          .match({ user_id: get().userId, week, day_index: dayIndex, exercise_index: exerciseIndex }).then()
+          .match({ user_id: userId, week, day_index: dayIndex, exercise_index: exerciseIndex }).then()
       }
     }
   },
 
   addMetric: async (metric) => {
-    const metrics = [...get().metrics, { ...metric, date: new Date().toISOString().split('T')[0] }]
-    set({ metrics })
+    const userId = get().userId
+    const date = metric.date || new Date().toISOString().split('T')[0]
+    const row = {
+      user_id: userId,
+      date,
+      week: get().currentWeek,
+      weight_lbs: metric.weight || null,
+      waist_inches: metric.waist || null,
+      body_fat_pct: metric.bodyFat || null,
+      muscle_mass_lbs: metric.muscleMass || null,
+      bone_mass_lbs: metric.boneMass || null,
+      water_pct: metric.waterPct || null,
+      visceral_fat: metric.visceralFat || null,
+      bmr: metric.bmr || null,
+      metabolic_age: metric.metabolicAge || null,
+      source: 'manual',
+    }
 
-    if (supabase && get().userId) {
-      await supabase.from('metrics').insert({
-        user_id: get().userId,
-        date: metric.date || new Date().toISOString().split('T')[0],
-        week: get().currentWeek,
-        weight_lbs: metric.weight || null,
-        waist_inches: metric.waist || null,
-        source: 'manual',
-      })
+    const { data } = await supabase.from('metrics').insert(row).select().single()
+    if (data) {
+      set({ metrics: [data, ...get().metrics] })
+    }
+  },
+
+  // GLP-1 doses
+  addGlp1Dose: async (dose) => {
+    const userId = get().userId
+    const row = {
+      user_id: userId,
+      dose_date: dose.date,
+      medication: dose.medication || 'Mounjaro',
+      dosage_mg: dose.dosage || 7.5,
+      route: dose.route || 'SQ',
+      injection_site: dose.site || null,
+      side_effects: dose.sideEffects || null,
+      notes: dose.notes || null,
+    }
+    const { data } = await supabase.from('glp1_doses').upsert(row, { onConflict: 'user_id,dose_date' }).select().single()
+    if (data) {
+      const doses = [data, ...get().glp1Doses.filter(d => d.dose_date !== data.dose_date)]
+      doses.sort((a, b) => b.dose_date.localeCompare(a.dose_date))
+      set({ glp1Doses: doses })
+    }
+  },
+
+  deleteGlp1Dose: async (id) => {
+    await supabase.from('glp1_doses').delete().eq('id', id)
+    set({ glp1Doses: get().glp1Doses.filter(d => d.id !== id) })
+  },
+
+  // Lab results
+  addLabResult: async (lab) => {
+    const userId = get().userId
+    const row = {
+      user_id: userId,
+      test_date: lab.testDate,
+      category: lab.category,
+      biomarker: lab.biomarker,
+      value: lab.value,
+      numeric_value: lab.numericValue || null,
+      unit: lab.unit || null,
+      reference_range: lab.referenceRange || null,
+      optimal_range_min: lab.optimalMin || null,
+      optimal_range_max: lab.optimalMax || null,
+      status: lab.status || null,
+      out_of_range_direction: lab.direction || null,
+    }
+    const { data } = await supabase.from('lab_results').upsert(row, { onConflict: 'user_id,test_date,biomarker' }).select().single()
+    if (data) {
+      const labs = [data, ...get().labResults.filter(l => !(l.test_date === data.test_date && l.biomarker === data.biomarker))]
+      labs.sort((a, b) => b.test_date.localeCompare(a.test_date) || a.category.localeCompare(b.category))
+      set({ labResults: labs })
     }
   },
 
@@ -88,24 +153,33 @@ export const useStore = create((set, get) => ({
 
   // Load from Supabase
   loadData: async () => {
-    if (!supabase) {
-      set({ loading: false })
-      return
-    }
-
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        set({ loading: false })
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        set({ loading: false, authenticated: false })
         return
       }
 
-      set({ userId: user.id })
+      const user = session.user
+      set({ userId: user.id, authenticated: true })
 
-      const [profileRes, logsRes, metricsRes] = await Promise.all([
-        supabase.from('profiles').select('current_week').eq('id', user.id).single(),
+      // Ensure profile exists (auto-create on first login)
+      const { data: existingProfile } = await supabase.from('profiles').select('id').eq('id', user.id).single()
+      if (!existingProfile) {
+        await supabase.from('profiles').insert({
+          id: user.id,
+          name: 'Mateus',
+          current_week: 1,
+          program_start_date: '2026-04-06',
+        })
+      }
+
+      const [profileRes, logsRes, metricsRes, glp1Res, labsRes] = await Promise.all([
+        supabase.from('profiles').select('current_week, program_start_date').eq('id', user.id).single(),
         supabase.from('workout_logs').select('*').eq('user_id', user.id),
-        supabase.from('metrics').select('*').eq('user_id', user.id).order('date', { ascending: false }).limit(30),
+        supabase.from('metrics').select('*').eq('user_id', user.id).order('date', { ascending: false }).limit(60),
+        supabase.from('glp1_doses').select('*').eq('user_id', user.id).order('dose_date', { ascending: false }).limit(52),
+        supabase.from('lab_results').select('*').eq('user_id', user.id).order('test_date', { ascending: false }),
       ])
 
       const completed = {}
@@ -117,15 +191,45 @@ export const useStore = create((set, get) => ({
         })
       }
 
+      // Auto-calculate current week from program_start_date
+      let currentWeek = profileRes.data?.current_week || 1
+      if (profileRes.data?.program_start_date) {
+        const start = new Date(profileRes.data.program_start_date + 'T00:00:00')
+        const now = new Date()
+        const diffMs = now - start
+        const diffWeeks = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1
+        if (diffWeeks >= 1 && diffWeeks <= 52) {
+          currentWeek = diffWeeks
+        } else if (diffWeeks < 1) {
+          currentWeek = 1
+        }
+      }
+
       set({
-        currentWeek: profileRes.data?.current_week || 1,
+        currentWeek,
         completedExercises: completed,
         metrics: metricsRes.data || [],
+        glp1Doses: glp1Res.data || [],
+        labResults: labsRes.data || [],
         loading: false,
       })
     } catch (err) {
       console.error('Failed to load data:', err)
-      set({ loading: false })
+      set({ loading: false, authenticated: false })
     }
+  },
+
+  // Sign out
+  signOut: async () => {
+    await supabase.auth.signOut()
+    set({
+      authenticated: false,
+      userId: null,
+      completedExercises: {},
+      metrics: [],
+      glp1Doses: [],
+      labResults: [],
+      currentWeek: 1,
+    })
   },
 }))

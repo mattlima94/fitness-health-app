@@ -2,10 +2,13 @@ import { useState } from 'react'
 import { useStore } from '../../lib/store'
 import { getPhase } from '../../lib/constants'
 import WeightChart from './WeightChart'
+import GLP1Section from './GLP1Section'
+import BodyCompositionForm from './BodyCompositionForm'
 
 export default function BodyPage() {
   const currentWeek = useStore((s) => s.currentWeek)
   const metrics = useStore((s) => s.metrics)
+  const glp1Doses = useStore((s) => s.glp1Doses)
   const addMetric = useStore((s) => s.addMetric)
   const showToast = useStore((s) => s.showToast)
   const phase = getPhase(currentWeek)
@@ -27,13 +30,14 @@ export default function BodyPage() {
 
   const latestWeight = metrics.find(m => m.weight_lbs)
   const latestWaist = metrics.find(m => m.waist_inches)
+  const latestBodyFat = metrics.find(m => m.body_fat_pct)
 
   return (
     <div className="px-4 pt-6 fade-in">
       <h1 className="text-2xl font-extrabold mb-5">Body</h1>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
+      <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="text-[11px] font-semibold tracking-widest uppercase mb-1" style={{ opacity: 0.4 }}>Weight</div>
           <div className="text-xl font-extrabold" style={{ fontFamily: 'var(--font-mono)' }}>
@@ -48,13 +52,25 @@ export default function BodyPage() {
           </div>
           <div className="text-[10px]" style={{ opacity: 0.3 }}>inches</div>
         </div>
+        <div className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="text-[11px] font-semibold tracking-widest uppercase mb-1" style={{ opacity: 0.4 }}>Body Fat</div>
+          <div className="text-xl font-extrabold" style={{ fontFamily: 'var(--font-mono)' }}>
+            {latestBodyFat?.body_fat_pct || '—'}
+          </div>
+          <div className="text-[10px]" style={{ opacity: 0.3 }}>%</div>
+        </div>
       </div>
 
-      {/* Weight Chart */}
-      <WeightChart metrics={metrics} phase={phase} />
+      {/* Weight Chart with GLP-1 markers */}
+      <WeightChart metrics={metrics} glp1Doses={glp1Doses} phase={phase} />
+
+      {/* GLP-1 Tracker */}
+      <div className="mt-4">
+        <GLP1Section />
+      </div>
 
       {/* Manual Entry */}
-      <div className="rounded-2xl p-5 mt-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="rounded-2xl p-5 mb-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
         <div className="text-[13px] font-semibold tracking-widest uppercase mb-3" style={{ opacity: 0.5 }}>
           Log Measurement
         </div>
@@ -94,6 +110,9 @@ export default function BodyPage() {
           </button>
         </form>
       </div>
+
+      {/* Body Composition (expandable) */}
+      <BodyCompositionForm />
     </div>
   )
 }
