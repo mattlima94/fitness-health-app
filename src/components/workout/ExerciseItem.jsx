@@ -32,8 +32,8 @@ export default function ExerciseItem({
 
   const handleWatchTutorial = (e) => {
     e.stopPropagation();
-    if (exerciseInfo?.youtube) {
-      window.open(exerciseInfo.youtube, '_blank');
+    if (exerciseInfo?.video) {
+      window.open(exerciseInfo.video, '_blank');
     }
   };
 
@@ -112,7 +112,7 @@ export default function ExerciseItem({
         <div className="px-3 pb-3 pt-0 border-t border-white/10 animate-in fade-in slide-in-from-top-2 duration-200">
           {/* Form Description */}
           <p className="text-xs text-white/40 mt-3 mb-3 leading-relaxed">
-            {exerciseInfo.form}
+            {exerciseInfo.description}
           </p>
 
           {/* Watch Tutorial Button */}
