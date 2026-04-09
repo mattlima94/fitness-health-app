@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Circle, Info, Play } from 'lucide-react';
+import { Check, Circle, Info } from 'lucide-react';
 import { useStore } from '../../lib/store';
 import { showToast } from '../layout/Toast';
 import { getExerciseInfo } from '../../lib/exerciseLibrary';
@@ -17,6 +17,28 @@ export default function ExerciseItem({
   const [isExpanded, setIsExpanded] = useState(false);
   const exerciseInfo = getExerciseInfo(exercise.name);
 
+  // Prefer locally-bundled GIF (served from Vercel /public/exercises/)
+  // and fall back to the static.exercisedb.dev CDN if the local file is
+  // missing. If both fail we hide the media entirely.
+  const initialSrc = exerciseInfo?.gif
+    ? exerciseInfo.gif.replace(
+        'https://static.exercisedb.dev/media/',
+        '/exercises/'
+      )
+    : null;
+  const [gifSrc, setGifSrc] = useState(initialSrc);
+  const [gifFailed, setGifFailed] = useState(false);
+
+  const handleGifError = () => {
+    // First failure: swap local path for the CDN URL.
+    if (gifSrc && gifSrc.startsWith('/exercises/') && exerciseInfo?.gif) {
+      setGifSrc(exerciseInfo.gif);
+      return;
+    }
+    // Second failure: give up and hide the image.
+    setGifFailed(true);
+  };
+
   const handleToggle = (e) => {
     e.stopPropagation();
     toggleExercise(week, dayIndex, exerciseIndex);
@@ -27,13 +49,6 @@ export default function ExerciseItem({
   const handleNameClick = () => {
     if (exerciseInfo) {
       setIsExpanded(!isExpanded);
-    }
-  };
-
-  const handleWatchTutorial = (e) => {
-    e.stopPropagation();
-    if (exerciseInfo?.video) {
-      window.open(exerciseInfo.video, '_blank');
     }
   };
 
@@ -110,19 +125,23 @@ export default function ExerciseItem({
       {/* Expanded Form & Tutorial Section */}
       {isExpanded && exerciseInfo && (
         <div className="px-3 pb-3 pt-0 border-t border-white/10 animate-in fade-in slide-in-from-top-2 duration-200">
+          {/* Animated GIF Demo */}
+          {gifSrc && !gifFailed && (
+            <div className="mt-3 rounded-md overflow-hidden bg-white">
+              <img
+                src={gifSrc}
+                alt={`${exercise.name} demonstration`}
+                loading="lazy"
+                onError={handleGifError}
+                className="w-full h-auto object-contain max-h-64"
+              />
+            </div>
+          )}
+
           {/* Form Description */}
-          <p className="text-xs text-white/40 mt-3 mb-3 leading-relaxed">
+          <p className="text-xs text-white/60 mt-3 leading-relaxed">
             {exerciseInfo.description}
           </p>
-
-          {/* Watch Tutorial Button */}
-          <button
-            onClick={handleWatchTutorial}
-            className="flex items-center gap-2 px-3 py-2 rounded bg-[var(--phase-accent)]/20 hover:bg-[var(--phase-accent)]/30 transition-colors text-xs font-medium text-white/80 hover:text-white w-full justify-center"
-          >
-            <Play size={14} className="flex-shrink-0" />
-            Watch Tutorial
-          </button>
         </div>
       )}
     </div>
