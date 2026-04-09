@@ -13,6 +13,7 @@ import { useMetrics } from '../../hooks/useMetrics';
 import { useStore } from '../../lib/store';
 import { getPhaseColor } from '../../lib/constants';
 import { showToast } from '../layout/Toast';
+import Glp1Log from './Glp1Log';
 
 export default function BodyPage() {
   const { metrics, addMetric, latestMetric, weightTrend } = useMetrics();
@@ -254,6 +255,9 @@ export default function BodyPage() {
           </div>
         </div>
       )}
+
+      {/* GLP-1 Dose Log */}
+      <Glp1Log />
     </div>
   );
 }

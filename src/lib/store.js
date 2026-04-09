@@ -14,6 +14,10 @@ export const useStore = create(
       // Body metrics - array of { date, week, weight, waist, notes }
       metrics: [],
 
+      // GLP-1 dose log - array of { date, week, dose, medication, site, sideEffects, notes }
+      // Mateus is on Mounjaro (tirzepatide) 7.5 mg SQ weekly as of April 2026.
+      glp1Logs: [],
+
       // UI state
       activeTab: 'today',
       selectedDay: null, // dayIndex for workout detail
@@ -95,6 +99,34 @@ export const useStore = create(
         return get().metrics.filter(m => m.weight).slice(-count);
       },
 
+      // ── GLP-1 dose tracking ───────────────────────────────────────
+      addGlp1Log: (log) => set((state) => ({
+        glp1Logs: [
+          ...state.glp1Logs,
+          { ...log, date: log.date || new Date().toISOString().split('T')[0] },
+        ],
+      })),
+
+      deleteGlp1Log: (date) => set((state) => ({
+        glp1Logs: state.glp1Logs.filter((l) => l.date !== date),
+      })),
+
+      getLatestGlp1Log: () => {
+        const logs = get().glp1Logs;
+        if (logs.length === 0) return null;
+        // Sort by date descending, return newest
+        return [...logs].sort((a, b) => b.date.localeCompare(a.date))[0];
+      },
+
+      getDaysSinceLastGlp1: () => {
+        const latest = get().getLatestGlp1Log();
+        if (!latest) return null;
+        const last = new Date(latest.date);
+        const today = new Date();
+        const diffMs = today.setHours(0, 0, 0, 0) - last.setHours(0, 0, 0, 0);
+        return Math.round(diffMs / (1000 * 60 * 60 * 24));
+      },
+
       // Timer
       toggleTimer: () => set((s) => ({ showTimer: !s.showTimer })),
       setTimerDuration: (d) => set({ timerDuration: d }),
@@ -109,6 +141,7 @@ export const useStore = create(
         programStartDate: state.programStartDate,
         completedExercises: state.completedExercises,
         metrics: state.metrics,
+        glp1Logs: state.glp1Logs,
       }),
     }
   )
