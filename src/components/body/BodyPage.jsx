@@ -7,6 +7,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
   ResponsiveContainer,
 } from 'recharts';
 import { useMetrics } from '../../hooks/useMetrics';
@@ -15,9 +16,14 @@ import { getPhaseColor } from '../../lib/constants';
 import { showToast } from '../layout/Toast';
 import Glp1Log from './Glp1Log';
 
+// Color used for GLP-1 dose markers on the weight chart.
+// Amber to stand out against the phase-accent area fill.
+const GLP1_MARKER_COLOR = '#FFB020';
+
 export default function BodyPage() {
   const { metrics, addMetric, latestMetric, weightTrend } = useMetrics();
   const currentWeek = useStore((s) => s.currentWeek);
+  const glp1Logs = useStore((s) => s.glp1Logs);
 
   const [weight, setWeight] = useState('');
   const [waist, setWaist] = useState('');
@@ -54,15 +60,31 @@ export default function BodyPage() {
   const weightChange = getWeightChange();
   const changeColor = weightChange && weightChange < 0 ? 'text-green-400' : 'text-red-400';
 
-  // Prepare chart data
+  // Prepare chart data — use epoch timestamps on the X axis so we can
+  // overlay GLP-1 dose markers on arbitrary dates (they won't always
+  // coincide with weight check-in dates).
   const chartData = weightTrend.map((m) => ({
-    date: new Date(m.date).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    }),
+    ts: new Date(m.date).getTime(),
     weight: m.weight,
     fullDate: m.date,
   }));
+
+  // Filter doses to the visible range of the chart, then sort ascending.
+  const chartMinTs = chartData.length > 0 ? chartData[0].ts : null;
+  const chartMaxTs = chartData.length > 0 ? chartData[chartData.length - 1].ts : null;
+  const doseMarkers =
+    chartMinTs !== null
+      ? [...glp1Logs]
+          .map((log) => ({ ...log, ts: new Date(log.date).getTime() }))
+          .filter((log) => log.ts >= chartMinTs && log.ts <= chartMaxTs)
+          .sort((a, b) => a.ts - b.ts)
+      : [];
+
+  const formatTs = (ts) =>
+    new Date(ts).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
 
   const phaseColor = getPhaseColor(currentWeek);
 
@@ -174,9 +196,20 @@ export default function BodyPage() {
       {chartData.length > 1 && (
         <div className="px-4 space-y-4">
           <div className="rounded-2xl p-4 bg-white/5 border border-white/10">
-            <h3 className="text-sm font-semibold text-white mb-4">Weight Trend</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <AreaChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white">Weight Trend</h3>
+              {doseMarkers.length > 0 && (
+                <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                  <span
+                    className="inline-block w-3 border-t border-dashed"
+                    style={{ borderColor: GLP1_MARKER_COLOR }}
+                  />
+                  <span>GLP-1 dose</span>
+                </div>
+              )}
+            </div>
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={chartData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorWeight" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={phaseColor} stopOpacity={0.3} />
@@ -185,7 +218,11 @@ export default function BodyPage() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                 <XAxis
-                  dataKey="date"
+                  dataKey="ts"
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={formatTs}
                   tick={{ fill: '#999', fontSize: 12 }}
                   stroke="rgba(255,255,255,0.1)"
                 />
@@ -201,6 +238,7 @@ export default function BodyPage() {
                     borderRadius: '8px',
                   }}
                   labelStyle={{ color: '#fff' }}
+                  labelFormatter={(ts) => formatTs(ts)}
                   formatter={(value) => [`${value.toFixed(1)} lbs`, 'Weight']}
                 />
                 <Area
@@ -211,8 +249,33 @@ export default function BodyPage() {
                   fillOpacity={1}
                   fill="url(#colorWeight)"
                 />
+                {/* GLP-1 dose markers — vertical dashed lines labeled
+                    with the dose in mg. Rendered AFTER <Area> so they
+                    sit on top of the fill. */}
+                {doseMarkers.map((log) => (
+                  <ReferenceLine
+                    key={`${log.date}-${log.dose}`}
+                    x={log.ts}
+                    stroke={GLP1_MARKER_COLOR}
+                    strokeDasharray="4 3"
+                    strokeOpacity={0.85}
+                    ifOverflow="extendDomain"
+                    label={{
+                      value: `${log.dose}mg`,
+                      position: 'top',
+                      fill: GLP1_MARKER_COLOR,
+                      fontSize: 10,
+                      fontWeight: 600,
+                    }}
+                  />
+                ))}
               </AreaChart>
             </ResponsiveContainer>
+            {doseMarkers.length === 0 && glp1Logs.length > 0 && (
+              <p className="text-[10px] text-gray-500 mt-2 text-center">
+                GLP-1 doses logged but fall outside the chart's weight-log range.
+              </p>
+            )}
           </div>
         </div>
       )}
