@@ -1,50 +1,72 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  pushMetric,
+  pushGlp1Dose,
+  deleteGlp1Dose,
+  setWorkoutCompletion,
+} from './syncService';
 
+// Supabase is the source of truth for metrics, glp1Logs, and completedExercises.
+// We keep the rest (currentWeek / programStartDate / UI state) in localStorage
+// so the app boots with the right phase and tab even before hydration completes.
 export const useStore = create(
   persist(
     (set, get) => ({
-      // Profile
       currentWeek: 1,
-      programStartDate: null, // ISO date string
+      programStartDate: null,
 
-      // Workout completion - keyed as "week-dayIdx-exIdx"
       completedExercises: {},
-
-      // Body metrics - array of { date, week, weight, waist, notes }
       metrics: [],
-
-      // GLP-1 dose log - array of { date, week, dose, medication, site, sideEffects, notes }
-      // Mateus is on Mounjaro (tirzepatide) 7.5 mg SQ weekly as of April 2026.
       glp1Logs: [],
+      isHydrated: false,
 
-      // UI state
       activeTab: 'today',
-      selectedDay: null, // dayIndex for workout detail
+      selectedDay: null,
       showTimer: false,
       timerDuration: 60,
       weekPickerOpen: false,
 
-      // Actions
       setCurrentWeek: (week) => set({ currentWeek: Math.max(1, Math.min(52, week)) }),
       setStartDate: (date) => set({ programStartDate: date }),
       setActiveTab: (tab) => set({ activeTab: tab }),
       setSelectedDay: (day) => set({ selectedDay: day }),
 
-      toggleExercise: (week, dayIdx, exIdx) => set((state) => {
-        const key = `${week}-${dayIdx}-${exIdx}`;
-        const updated = { ...state.completedExercises };
-        if (updated[key]) {
-          delete updated[key];
-        } else {
-          updated[key] = new Date().toISOString();
-        }
-        return { completedExercises: updated };
-      }),
+      hydrate: (snapshot, opts = {}) =>
+        set((state) => {
+          if (opts.merge) {
+            return {
+              metrics: snapshot.metrics ?? state.metrics,
+              glp1Logs: snapshot.glp1Logs ?? state.glp1Logs,
+              completedExercises:
+                snapshot.completedExercises ?? state.completedExercises,
+              isHydrated: true,
+            };
+          }
+          return {
+            metrics: snapshot.metrics ?? [],
+            glp1Logs: snapshot.glp1Logs ?? [],
+            completedExercises: snapshot.completedExercises ?? {},
+            isHydrated: true,
+          };
+        }),
 
-      isExerciseCompleted: (week, dayIdx, exIdx) => {
-        return !!get().completedExercises[`${week}-${dayIdx}-${exIdx}`];
+      toggleExercise: (week, dayIdx, exIdx) => {
+        const key = `${week}-${dayIdx}-${exIdx}`;
+        const wasCompleted = !!get().completedExercises[key];
+        set((state) => {
+          const updated = { ...state.completedExercises };
+          if (wasCompleted) delete updated[key];
+          else updated[key] = new Date().toISOString();
+          return { completedExercises: updated };
+        });
+        setWorkoutCompletion(week, dayIdx, exIdx, !wasCompleted).catch((e) =>
+          console.error('[store] toggleExercise sync', e)
+        );
       },
+
+      isExerciseCompleted: (week, dayIdx, exIdx) =>
+        !!get().completedExercises[`${week}-${dayIdx}-${exIdx}`],
 
       getDayProgress: (week, dayIdx, totalExercises) => {
         let done = 0;
@@ -56,7 +78,8 @@ export const useStore = create(
 
       getWeekProgress: (week, plan) => {
         if (!plan || !plan[week]) return 0;
-        let done = 0, total = 0;
+        let done = 0,
+          total = 0;
         plan[week].forEach((day, dayIdx) => {
           total += day.exercises.length;
           day.exercises.forEach((_, exIdx) => {
@@ -66,7 +89,6 @@ export const useStore = create(
         return total > 0 ? done / total : 0;
       },
 
-      // Streak calculation - consecutive weeks with >= 2/3 days having progress
       getStreak: (plan) => {
         const state = get();
         let streak = 0;
@@ -80,41 +102,54 @@ export const useStore = create(
             if (hasAny) daysWithProgress++;
           });
           if (daysWithProgress >= 2) streak++;
-          else if (w < state.currentWeek) break; // allow current week to be incomplete
+          else if (w < state.currentWeek) break;
           else break;
         }
         return streak;
       },
 
-      addMetric: (metric) => set((state) => ({
-        metrics: [...state.metrics, { ...metric, date: metric.date || new Date().toISOString().split('T')[0] }]
-      })),
+      addMetric: (metric) => {
+        const enriched = {
+          ...metric,
+          date: metric.date || new Date().toISOString().split('T')[0],
+        };
+        set((state) => ({ metrics: [...state.metrics, enriched] }));
+        pushMetric(enriched).catch((e) =>
+          console.error('[store] addMetric sync', e)
+        );
+      },
 
       getLatestMetric: () => {
         const metrics = get().metrics;
         return metrics.length > 0 ? metrics[metrics.length - 1] : null;
       },
 
-      getWeightTrend: (count = 20) => {
-        return get().metrics.filter(m => m.weight).slice(-count);
+      getWeightTrend: (count = 20) =>
+        get().metrics.filter((m) => m.weight).slice(-count),
+
+      addGlp1Log: (log) => {
+        const enriched = {
+          ...log,
+          date: log.date || new Date().toISOString().split('T')[0],
+        };
+        set((state) => ({ glp1Logs: [...state.glp1Logs, enriched] }));
+        pushGlp1Dose(enriched).catch((e) =>
+          console.error('[store] addGlp1Log sync', e)
+        );
       },
 
-      // ── GLP-1 dose tracking ───────────────────────────────────────
-      addGlp1Log: (log) => set((state) => ({
-        glp1Logs: [
-          ...state.glp1Logs,
-          { ...log, date: log.date || new Date().toISOString().split('T')[0] },
-        ],
-      })),
-
-      deleteGlp1Log: (date) => set((state) => ({
-        glp1Logs: state.glp1Logs.filter((l) => l.date !== date),
-      })),
+      deleteGlp1Log: (date) => {
+        set((state) => ({
+          glp1Logs: state.glp1Logs.filter((l) => l.date !== date),
+        }));
+        deleteGlp1Dose(date).catch((e) =>
+          console.error('[store] deleteGlp1Log sync', e)
+        );
+      },
 
       getLatestGlp1Log: () => {
         const logs = get().glp1Logs;
         if (logs.length === 0) return null;
-        // Sort by date descending, return newest
         return [...logs].sort((a, b) => b.date.localeCompare(a.date))[0];
       },
 
@@ -127,21 +162,18 @@ export const useStore = create(
         return Math.round(diffMs / (1000 * 60 * 60 * 24));
       },
 
-      // Timer
       toggleTimer: () => set((s) => ({ showTimer: !s.showTimer })),
       setTimerDuration: (d) => set({ timerDuration: d }),
-
-      // Week picker
       toggleWeekPicker: () => set((s) => ({ weekPickerOpen: !s.weekPickerOpen })),
     }),
     {
       name: 'fitness-store',
+      // Persist only profile + UI scaffolding. metrics, glp1Logs, and
+      // completedExercises are owned by Supabase and rehydrated on every
+      // launch, so we deliberately exclude them from localStorage.
       partialize: (state) => ({
         currentWeek: state.currentWeek,
         programStartDate: state.programStartDate,
-        completedExercises: state.completedExercises,
-        metrics: state.metrics,
-        glp1Logs: state.glp1Logs,
       }),
     }
   )
